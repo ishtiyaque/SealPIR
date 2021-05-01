@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include "pir_client.hpp"
+#include <chrono>
 
 class PIRServer {
   public:
@@ -22,6 +23,14 @@ class PIRServer {
     PirReply generate_reply(PirQuery query, std::uint32_t client_id);
 
     void set_galois_key(std::uint32_t client_id, seal::GaloisKeys galkey);
+
+    uint64_t expansion_time;
+    uint64_t query_ntt_time;
+    uint64_t inter_db_ntt_time;
+    uint64_t mult_time;
+    uint64_t add_time;
+    uint64_t inv_ntt_time;
+    uint64_t inter_db_construction_time;
 
   private:
     seal::EncryptionParameters params_; // SEAL parameters

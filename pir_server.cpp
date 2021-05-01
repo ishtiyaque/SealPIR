@@ -12,6 +12,14 @@ PIRServer::PIRServer(const EncryptionParameters &params, const PirParams &pir_pa
 {
     auto context = SEALContext::Create(params, false);
     evaluator_ = make_unique<Evaluator>(context);
+    expansion_time = 0;
+    query_ntt_time = 0;
+    inter_db_ntt_time = 0;
+    mult_time = 0;
+    add_time = 0;
+    inv_ntt_time = 0;
+    inter_db_construction_time = 0;
+
 }
 
 void PIRServer::preprocess_database() {
@@ -131,7 +139,7 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
 
     vector<uint64_t> nvec = pir_params_.nvec;
     uint64_t product = 1;
-
+    
     for (uint32_t i = 0; i < nvec.size(); i++) {
         product *= nvec[i];
     }
@@ -161,40 +169,43 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
         for (uint32_t j = 0; j < query[i].size(); j++){
             uint64_t total = N; 
             if (j == query[i].size() - 1){
-                total = n_i % N; 
+                total = ((n_i - 1) % N) + 1; 
             }
+            cout<<"total "<<total<<endl; 
             cout << "-- expanding one query ctxt into " << total  << " ctxts "<< endl;
+            auto time_pre_s = chrono::high_resolution_clock::now();
             vector<Ciphertext> expanded_query_part = expand_query(query[i][j], total, client_id);
+            auto time_post_s = chrono::high_resolution_clock::now();
+            expansion_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
             expanded_query.insert(expanded_query.end(), std::make_move_iterator(expanded_query_part.begin()), 
                     std::make_move_iterator(expanded_query_part.end()));
             expanded_query_part.clear(); 
+ 
         }
         cout << "Server: expansion done " << endl; 
         if (expanded_query.size() != n_i) {
             cout << " size mismatch!!! " << expanded_query.size() << ", " << n_i << endl; 
         }    
 
-        /*
-        cout << "Checking expanded query " << endl; 
-        Plaintext tempPt; 
-        for (int h = 0 ; h < expanded_query.size(); h++){
-            cout << "noise budget = " << client.decryptor_->invariant_noise_budget(expanded_query[h]) << ", "; 
-            client.decryptor_->decrypt(expanded_query[h], tempPt); 
-            cout << tempPt.to_string()  << endl; 
-        }
-        cout << endl;
-        */
 
         // Transform expanded query to NTT, and ...
+        auto time_pre_s = chrono::high_resolution_clock::now();
         for (uint32_t jj = 0; jj < expanded_query.size(); jj++) {
             evaluator_->transform_to_ntt_inplace(expanded_query[jj]);
         }
+        auto time_post_s = chrono::high_resolution_clock::now();
+        query_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
 
         // Transform plaintext to NTT. If database is pre-processed, can skip
         if ((!is_db_preprocessed_) || i > 0) {
+            time_pre_s = chrono::high_resolution_clock::now();
             for (uint32_t jj = 0; jj < cur->size(); jj++) {
                 evaluator_->transform_to_ntt_inplace((*cur)[jj], params_.parms_id());
             }
+            time_post_s = chrono::high_resolution_clock::now();
+            inter_db_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
         }
 
         for (uint64_t k = 0; k < product; k++) {
@@ -209,24 +220,37 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
         Ciphertext temp;
 
         for (uint64_t k = 0; k < product; k++) {
-
+            time_pre_s = chrono::high_resolution_clock::now();
             evaluator_->multiply_plain(expanded_query[0], (*cur)[k], intermediateCtxts[k]);
+            time_post_s = chrono::high_resolution_clock::now();
+            mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
             for (uint64_t j = 1; j < n_i; j++) {
+                time_pre_s = chrono::high_resolution_clock::now();
                 evaluator_->multiply_plain(expanded_query[j], (*cur)[k + j * product], temp);
+                time_post_s = chrono::high_resolution_clock::now();
+                mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
+                time_pre_s = chrono::high_resolution_clock::now();
                 evaluator_->add_inplace(intermediateCtxts[k], temp); // Adds to first component.
+                time_post_s = chrono::high_resolution_clock::now();
+                add_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
             }
         }
-
+        time_pre_s = chrono::high_resolution_clock::now();
         for (uint32_t jj = 0; jj < intermediateCtxts.size(); jj++) {
             evaluator_->transform_from_ntt_inplace(intermediateCtxts[jj]);
-            // print intermediate ctxts? 
-            //cout << "const term of ctxt " << jj << " = " << intermediateCtxts[jj][0] << endl; 
+            cout << "const term of ctxt " << jj << " = " << intermediateCtxts[jj][0] << endl; 
         }
+        time_post_s = chrono::high_resolution_clock::now();
+        inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
 
         if (i == nvec.size() - 1) {
             return intermediateCtxts;
         } else {
+            time_pre_s = chrono::high_resolution_clock::now();
             intermediate_plain.clear();
             intermediate_plain.reserve(pir_params_.expansion_ratio * product);
             cur = &intermediate_plain;
@@ -246,8 +270,11 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
                 }
             }
             product *= pir_params_.expansion_ratio; // multiply by expansion rate.
+            time_post_s = chrono::high_resolution_clock::now();
+            inter_db_construction_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
         }
-        cout << "Server: " << i + 1 << "-th recursion level finished " << endl; 
+        //cout << "Server: " << i + 1 << "-th recursion level finished " << endl; 
         cout << endl;
     }
     cout << "reply generated!  " << endl;
@@ -268,7 +295,9 @@ inline vector<Ciphertext> PIRServer::expand_query(const Ciphertext &encrypted, u
     GaloisKeys &galkey = galoisKeys_[client_id];
 
     // Assume that m is a power of 2. If not, round it to the next power of 2.
-    uint32_t logm = ceil(log2(m));
+    uint32_t logm = ceil(log2((uint32_t)m));
+cout<<"m "<<m<<endl;
+cout<<"logm "<<logm<<endl;
     Plaintext two("2");
 
     vector<int> galois_elts;
@@ -279,6 +308,11 @@ inline vector<Ciphertext> PIRServer::expand_query(const Ciphertext &encrypted, u
     for (int i = 0; i < ceil(log2(n)); i++) {
         galois_elts.push_back((n + exponentiate_uint64(2, i)) / exponentiate_uint64(2, i));
     }
+    // cout<<"Printing galois elts from expand";
+    // for(int i = 0;i<galois_elts.size();i++) {
+    //     cout<<galois_elts[i]<<"\t";
+    // }
+    // cout<<endl<<endl;
 
     vector<Ciphertext> temp;
     temp.push_back(encrypted);
@@ -296,7 +330,7 @@ inline vector<Ciphertext> PIRServer::expand_query(const Ciphertext &encrypted, u
         int index = (index_raw * galois_elts[i]) % (n << 1);
 
         for (uint32_t a = 0; a < temp.size(); a++) {
-
+//cout<<"calling apply_galois, i = "<<i<<" galois_elts[i] "<<galois_elts[i]<<endl;
             evaluator_->apply_galois(temp[a], galois_elts[i], galkey, tempctxt_rotated);
 
             //cout << "rotate " << client.decryptor_->invariant_noise_budget(tempctxt_rotated) << ", "; 

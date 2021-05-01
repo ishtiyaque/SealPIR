@@ -14,13 +14,13 @@ using namespace seal;
 
 int main(int argc, char *argv[]) {
 
-    uint64_t number_of_items = 1 << 12;
-    uint64_t size_per_item = 288; // in bytes
+    uint64_t number_of_items = (16 * 4096);
+    uint64_t size_per_item = 256; // in bytes
     uint32_t N = 2048;
 
     // Recommended values: (logt, d) = (12, 2) or (8, 1). 
-    uint32_t logt = 12; 
-    uint32_t d = 2;
+    uint32_t logt = 7; 
+    uint32_t d = 1;
 
     EncryptionParameters params(scheme_type::BFV);
     PirParams pir_params;
@@ -54,9 +54,10 @@ int main(int argc, char *argv[]) {
     // Initialize PIR client....
     PIRClient client(params, pir_params);
     GaloisKeys galois_keys = client.generate_galois_keys();
+    cout<<"Gal key size: "<<galois_keys.size()<<endl;
 
     // Set galois key for client with id 0
-    cout << "Main: Setting Galois keys...";
+    cout << "Main: Setting Galois keys..."<<endl;
     server.set_galois_key(0, galois_keys);
 
     // Measure database setup
@@ -111,14 +112,37 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    auto total_reply_gen_time = server.expansion_time + server.query_ntt_time + server.mult_time + 
+            server.add_time + server.inter_db_construction_time + server.inter_db_ntt_time + server.inv_ntt_time;
+
+    int query_size = 0;
+    for(int i =0;i<query.size();i++) {
+        query_size += query[i].size();
+    }
+
     // Output results
-    cout << "Main: PIR result correct!" << endl;
-    cout << "Main: PIRServer pre-processing time: " << time_pre_us / 1000 << " ms" << endl;
-    cout << "Main: PIRClient query generation time: " << time_query_us / 1000 << " ms" << endl;
-    cout << "Main: PIRServer reply generation time: " << time_server_us / 1000 << " ms"
-         << endl;
-    cout << "Main: PIRClient answer decode time: " << time_decode_us / 1000 << " ms" << endl;
-    cout << "Main: Reply num ciphertexts: " << reply.size() << endl;
+    cout << "PIR result correct!" << endl;
+
+    cout<<"\nNetwork:"<<endl;
+    cout<<"\tquery size (ct): "<<query_size<<endl;
+    cout<<"\tresponse size (ct): "<<reply.size()<<endl;
+
+    cout<<"\nClient CPU:"<<endl;
+    cout << "\tquery generation time (us): " << time_query_us  << endl;
+    cout << "\tresponse decode time (us): " << time_decode_us  << endl;
+
+    cout<<"\nServer CPU: "<<endl;
+
+    cout << "\tDB pre-processing time (us): " << time_pre_us<< endl;
+    cout << "\ttotal query expansion time (us): " << server.expansion_time<< endl;
+    cout << "\treply generation time (blackbox): " << time_server_us<< endl;
+    cout<<"\tquery ntt time (us): "<<server.query_ntt_time<<endl;
+    cout<<"\tmultiplication time (us): "<<server.mult_time<<endl;
+    cout<<"\tadd time (us): "<<server.add_time<<endl;
+    cout<<"\tinv ntt time (us): "<<server.inv_ntt_time<<endl;
+    cout<<"\tintermediate db construction time (us): "<<server.inter_db_construction_time<<endl;
+    cout<<"\tintermediate db ntt time (us): "<<server.inter_db_ntt_time<<endl;
+    cout<<"\tsum of components: "<<total_reply_gen_time<<endl;
 
     return 0;
 }

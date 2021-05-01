@@ -140,11 +140,11 @@ GaloisKeys PIRClient::generate_galois_keys() {
     int N = params_.poly_modulus_degree();
     int logN = get_power_of_two(N);
 
-    //cout << "printing galois elements...";
+    cout << "printing galois elements...";
     for (int i = 0; i < logN; i++) {
         galois_elts.push_back((N + exponentiate_uint64(2, i)) / exponentiate_uint64(2, i));
 //#ifdef DEBUG
-        // cout << galois_elts.back() << ", ";
+        cout << galois_elts.back() << ", ";
 //#endif
     }
 

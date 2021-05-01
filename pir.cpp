@@ -65,7 +65,7 @@ void gen_params(uint64_t ele_num, uint64_t ele_size, uint32_t N, uint32_t logt,
     uint32_t expansion_ratio = 0;
     for (uint32_t i = 0; i < params.coeff_modulus().size(); ++i) {
         double logqi = log2(params.coeff_modulus()[i].value());
-        cout << "PIR: logqi = " << logqi << endl; 
+        //cout << "PIR: logqi = " << logqi << endl; 
         expansion_ratio += ceil(logqi / logt);
     }
 
