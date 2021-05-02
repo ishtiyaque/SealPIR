@@ -14,13 +14,13 @@ using namespace seal;
 
 int main(int argc, char *argv[]) {
 
-    uint64_t number_of_items = (16 * 4096);
-    uint64_t size_per_item = 256; // in bytes
+    uint64_t number_of_items = (25 * 4096);
+    uint64_t size_per_item = 1024; // in bytes
     uint32_t N = 2048;
 
     // Recommended values: (logt, d) = (12, 2) or (8, 1). 
-    uint32_t logt = 7; 
-    uint32_t d = 1;
+    uint32_t logt = 12; 
+    uint32_t d = 2;
 
     EncryptionParameters params(scheme_type::BFV);
     PirParams pir_params;
@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
     random_device rd;
     for (uint64_t i = 0; i < number_of_items; i++) {
         for (uint64_t j = 0; j < size_per_item; j++) {
-            auto val = rd() % 256;
+            auto val = rand() % 256;
             db.get()[(i * size_per_item) + j] = val;
             db_copy.get()[(i * size_per_item) + j] = val;
         }
