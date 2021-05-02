@@ -138,26 +138,26 @@ void PIRServer::set_galois_key(std::uint32_t client_id, seal::GaloisKeys galkey)
 PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
 
     vector<uint64_t> nvec = pir_params_.nvec;
-    uint64_t product = 1;
+    //uint64_t product = 1;
     
-    for (uint32_t i = 0; i < nvec.size(); i++) {
-        product *= nvec[i];
-    }
+    // for (uint32_t i = 0; i < nvec.size(); i++) {
+    //     product *= nvec[i];
+    // }
 
-cout<<"initial value of product "<<product<<endl;
+    //cout<<"initial value of product "<<product<<endl;
     auto coeff_count = params_.poly_modulus_degree();
 
     vector<Plaintext> *cur = db_.get();
-    vector<Plaintext> intermediate_plain; // pir_params_.expansion_ratio * nvec[1] // decompose....
+    vector<Plaintext> intermediate_plain; 
     intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
     vector<Ciphertext> final_result(pir_params_.expansion_ratio);
     vector<Ciphertext> intermediateCtxts(nvec[1]);
+    vector< vector<Ciphertext> > expanded_query; 
 
 
 
     auto pool = MemoryManager::GetPool();
 
-    vector< vector<Ciphertext> > expanded_query; 
 
 
     int N = params_.poly_modulus_degree();
@@ -208,19 +208,19 @@ cout<<"initial value of product "<<product<<endl;
     //for (uint32_t i = 0; i < nvec.size(); i++) {
 
 
-        product /= nvec[0];
-    printf("product after %d division: %d\n",0+1,product);
+        // product /= nvec[0];
+        // printf("product after %d division: %d\n",0+1,product);
 
         Ciphertext temp;
 
-        for (uint64_t k = 0; k < product; k++) {
+        for (uint64_t k = 0; k < nvec[1]; k++) {
             time_pre_s = chrono::high_resolution_clock::now();
             evaluator_->multiply_plain(expanded_query[0][0], (*cur)[k], intermediateCtxts[k]);
             time_post_s = chrono::high_resolution_clock::now();
             mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
             for (uint64_t j = 1; j < nvec[0]; j++) {
                 time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->multiply_plain(expanded_query[0][j], (*cur)[k + j * product], temp);
+                evaluator_->multiply_plain(expanded_query[0][j], (*cur)[k + j * nvec[1]], temp);
                 time_post_s = chrono::high_resolution_clock::now();
                 mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
@@ -245,10 +245,10 @@ cout<<"initial value of product "<<product<<endl;
             cur = &intermediate_plain;
 
             auto tempplain = util::allocate<Plaintext>(
-                pir_params_.expansion_ratio * product,
+                pir_params_.expansion_ratio * nvec[1],
                 pool, coeff_count);
 
-            for (uint64_t rr = 0; rr < product; rr++) {
+            for (uint64_t rr = 0; rr < nvec[1]; rr++) {
 
                 decompose_to_plaintexts_ptr(intermediateCtxts[rr],
                     tempplain.get() + rr * pir_params_.expansion_ratio, logt);
@@ -258,7 +258,7 @@ cout<<"initial value of product "<<product<<endl;
                     intermediate_plain.emplace_back(tempplain[offset]);
                 }
             }
-            product *= pir_params_.expansion_ratio; // multiply by expansion rate.
+            //product *= pir_params_.expansion_ratio; // multiply by expansion rate.
             time_post_s = chrono::high_resolution_clock::now();
             inter_db_construction_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
@@ -273,18 +273,18 @@ cout<<"initial value of product "<<product<<endl;
 
         }
 
-            product /= nvec[1];
-    printf("product after %d division: %d\n",1+1,product);
+            // product /= nvec[1];
+            // printf("product after %d division: %d\n",1+1,product);
 
 
-        for (uint64_t k = 0; k < product; k++) {
+        for (uint64_t k = 0; k < pir_params_.expansion_ratio; k++) {
             time_pre_s = chrono::high_resolution_clock::now();
             evaluator_->multiply_plain(expanded_query[1][0], (*cur)[k], final_result[k]);
             time_post_s = chrono::high_resolution_clock::now();
             mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
             for (uint64_t j = 1; j < nvec[1]; j++) {
                 time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->multiply_plain(expanded_query[1][j], (*cur)[k + j * product], temp);
+                evaluator_->multiply_plain(expanded_query[1][j], (*cur)[k + j * pir_params_.expansion_ratio], temp);
                 time_post_s = chrono::high_resolution_clock::now();
                 mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
