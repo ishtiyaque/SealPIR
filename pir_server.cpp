@@ -154,7 +154,6 @@ cout<<"initial value of product "<<product<<endl;
     auto pool = MemoryManager::GetPool();
 
     vector< vector<Ciphertext> > expanded_query; 
-    vector<Ciphertext> single_expansion;
 
 
     int N = params_.poly_modulus_degree();
