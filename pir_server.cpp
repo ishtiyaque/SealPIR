@@ -304,25 +304,21 @@ vector<Plaintext> *current_db = server->db_.get();
         server->evaluator_->transform_from_ntt_inplace(server->intermediateCtxts[k]);
         server->decompose_to_plaintexts_ptr(server->intermediateCtxts[k],
                                     tempplain.get() + (k-start_id) * server->pir_params_.expansion_ratio, logt);
+        for (uint32_t jj = 0; jj < server->pir_params_.expansion_ratio; jj++)
+        {
+            //auto offset = rr * server->pir_params_.expansion_ratio + jj;
+            server->intermediate_plain[k*server->pir_params_.expansion_ratio + jj] =(tempplain[(k-start_id) * server->pir_params_.expansion_ratio + jj]);
+            server->evaluator_->transform_to_ntt_inplace(server->intermediate_plain[k*server->pir_params_.expansion_ratio + jj], server->params_.parms_id());
+        }
 
     }
 printf("thread %d finished first step\n",my_id);
    current_db = &server->intermediate_plain;
 
 
-    for (uint64_t rr = 0; rr < server->nvec[1]; rr++)
-    {
-
-        for (uint32_t jj = 0; jj < server->pir_params_.expansion_ratio; jj++)
-        {
-            auto offset = rr * server->pir_params_.expansion_ratio + jj;
-            server->intermediate_plain[offset] =(tempplain[offset]);
-        }
-    }
-
     for (uint32_t jj = 0; jj < current_db->size(); jj++)
     {
-        server->evaluator_->transform_to_ntt_inplace((*current_db)[jj], server->params_.parms_id());
+        //server->evaluator_->transform_to_ntt_inplace((*current_db)[jj], server->params_.parms_id());
     }
 
 
