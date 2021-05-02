@@ -5,11 +5,23 @@
 #include <memory>
 #include <vector>
 #include "pir_client.hpp"
+#include <pthread.h>
 #include <chrono>
+
+using namespace std;
+using namespace seal;
+using namespace seal::util;
+
+
+#define MIN(a,b) ((a) < (b)) ? (a) : (b)
+
+class ThreadArgument;
+void *pir(void *arg);
+
 
 class PIRServer {
   public:
-    PIRServer(const seal::EncryptionParameters &params, const PirParams &pir_params);
+    PIRServer(const seal::EncryptionParameters &params, const PirParams &pir_params, int _num_threads=1  );
 
     // NOTE: server takes over ownership of db and frees it when it exits.
     // Caller cannot free db
@@ -31,8 +43,28 @@ class PIRServer {
     uint64_t add_time;
     uint64_t inv_ntt_time;
     uint64_t inter_db_construction_time;
+    int num_thread;
 
-  private:
+    pthread_t *threads;
+    ThreadArgument *args;
+
+    vector<uint64_t> nvec;
+
+    //vector<Plaintext> *cur = db_.get();
+    vector<Plaintext> intermediate_plain; 
+    //Plaintext *intermediate_plain;
+    vector<Ciphertext> final_result;
+    Ciphertext  *intermediateCtxts;
+    vector< vector<Ciphertext> > expanded_query; 
+
+    pthread_mutex_t request_received_lock = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t request_received_cond = PTHREAD_COND_INITIALIZER;
+
+
+    bool request_received;
+
+
+  //private:
     seal::EncryptionParameters params_; // SEAL parameters
     PirParams pir_params_;              // PIR parameters
     std::unique_ptr<Database> db_;
@@ -44,4 +76,11 @@ class PIRServer {
     std::vector<seal::Plaintext> decompose_to_plaintexts(const seal::Ciphertext &encrypted);
     void multiply_power_of_X(const seal::Ciphertext &encrypted, seal::Ciphertext &destination,
                              std::uint32_t index);
+};
+
+
+class ThreadArgument{
+public:
+    PIRServer *server;
+    int thread_id;
 };

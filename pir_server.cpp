@@ -5,10 +5,9 @@ using namespace std;
 using namespace seal;
 using namespace seal::util;
 
-PIRServer::PIRServer(const EncryptionParameters &params, const PirParams &pir_params) :
-    params_(params), 
-    pir_params_(pir_params),
-    is_db_preprocessed_(false)
+PIRServer::PIRServer(const EncryptionParameters &params, const PirParams &pir_params, int _num_threads) : params_(params),
+                                                                                                          pir_params_(pir_params),
+                                                                                                          is_db_preprocessed_(false)
 {
     auto context = SEALContext::Create(params, false);
     evaluator_ = make_unique<Evaluator>(context);
@@ -20,12 +19,31 @@ PIRServer::PIRServer(const EncryptionParameters &params, const PirParams &pir_pa
     inv_ntt_time = 0;
     inter_db_construction_time = 0;
 
+    num_thread = _num_threads;
+
+    request_received=false;
+
+    threads = new pthread_t[num_thread];
+    args = new ThreadArgument[num_thread];
+
+    for(int i = 0; i < num_thread;i++) {
+        args[i].thread_id = i;
+        args[i].server = this;
+        if(pthread_create(&threads[i], NULL, pir, (void *)&args[i])) {
+            printf("Error creating thread\n");
+            exit(1);
+        }
+
+    }
 }
 
-void PIRServer::preprocess_database() {
-    if (!is_db_preprocessed_) {
+void PIRServer::preprocess_database()
+{
+    if (!is_db_preprocessed_)
+    {
 
-        for (uint32_t i = 0; i < db_->size(); i++) {
+        for (uint32_t i = 0; i < db_->size(); i++)
+        {
             evaluator_->transform_to_ntt_inplace(
                 db_->operator[](i), params_.parms_id());
         }
@@ -35,8 +53,10 @@ void PIRServer::preprocess_database() {
 }
 
 // Server takes over ownership of db and will free it when it exits
-void PIRServer::set_database(unique_ptr<vector<Plaintext>> &&db) {
-    if (!db) {
+void PIRServer::set_database(unique_ptr<vector<Plaintext>> &&db)
+{
+    if (!db)
+    {
         throw invalid_argument("db cannot be null");
     }
 
@@ -44,8 +64,9 @@ void PIRServer::set_database(unique_ptr<vector<Plaintext>> &&db) {
     is_db_preprocessed_ = false;
 }
 
-void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes, 
-    uint64_t ele_num, uint64_t ele_size) {
+void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes,
+                             uint64_t ele_num, uint64_t ele_size)
+{
 
     uint32_t logt = floor(log2(params_.plain_modulus().value()));
     uint32_t N = params_.poly_modulus_degree();
@@ -55,7 +76,8 @@ void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes,
 
     // number of FV plaintexts needed to create the d-dimensional matrix
     uint64_t prod = 1;
-    for (uint32_t i = 0; i < pir_params_.nvec.size(); i++) {
+    for (uint32_t i = 0; i < pir_params_.nvec.size(); i++)
+    {
         prod *= pir_params_.nvec[i];
     }
     uint64_t matrix_plaintexts = prod;
@@ -73,19 +95,25 @@ void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes,
     assert(coeff_per_ptxt <= N);
 
     cout << "Server: total number of FV plaintext = " << total << endl;
-    cout << "Server: elements packed into each plaintext " << ele_per_ptxt << endl; 
+    cout << "Server: elements packed into each plaintext " << ele_per_ptxt << endl;
 
     uint32_t offset = 0;
 
-    for (uint64_t i = 0; i < total; i++) {
+    for (uint64_t i = 0; i < total; i++)
+    {
 
         uint64_t process_bytes = 0;
 
-        if (db_size <= offset) {
+        if (db_size <= offset)
+        {
             break;
-        } else if (db_size < offset + bytes_per_ptxt) {
+        }
+        else if (db_size < offset + bytes_per_ptxt)
+        {
             process_bytes = db_size - offset;
-        } else {
+        }
+        else
+        {
             process_bytes = bytes_per_ptxt;
         }
 
@@ -98,13 +126,14 @@ void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes,
         assert(used <= coeff_per_ptxt);
 
         // Pad the rest with 1s
-        for (uint64_t j = 0; j < (N - used); j++) {
+        for (uint64_t j = 0; j < (N - used); j++)
+        {
             coefficients.push_back(1);
         }
 
         Plaintext plain;
         vector_to_plaintext(coefficients, plain);
-        // cout << i << "-th encoded plaintext = " << plain.to_string() << endl; 
+        // cout << i << "-th encoded plaintext = " << plain.to_string() << endl;
         result->push_back(move(plain));
     }
 
@@ -121,7 +150,8 @@ void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes,
 
     vector<uint64_t> padding(N, 1);
 
-    for (uint64_t i = 0; i < (matrix_plaintexts - current_plaintexts); i++) {
+    for (uint64_t i = 0; i < (matrix_plaintexts - current_plaintexts); i++)
+    {
         Plaintext plain;
         vector_to_plaintext(padding, plain);
         result->push_back(plain);
@@ -130,16 +160,18 @@ void PIRServer::set_database(const std::unique_ptr<const std::uint8_t[]> &bytes,
     set_database(move(result));
 }
 
-void PIRServer::set_galois_key(std::uint32_t client_id, seal::GaloisKeys galkey) {
+void PIRServer::set_galois_key(std::uint32_t client_id, seal::GaloisKeys galkey)
+{
     galkey.parms_id() = params_.parms_id();
     galoisKeys_[client_id] = galkey;
 }
 
-PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
+PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id)
+{
 
-    vector<uint64_t> nvec = pir_params_.nvec;
+    nvec = pir_params_.nvec;
     //uint64_t product = 1;
-    
+
     // for (uint32_t i = 0; i < nvec.size(); i++) {
     //     product *= nvec[i];
     // }
@@ -147,175 +179,169 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id) {
     //cout<<"initial value of product "<<product<<endl;
     auto coeff_count = params_.poly_modulus_degree();
 
-    vector<Plaintext> *cur = db_.get();
-    vector<Plaintext> intermediate_plain; 
-    intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
-    vector<Ciphertext> final_result(pir_params_.expansion_ratio);
-    vector<Ciphertext> intermediateCtxts(nvec[1]);
-    vector< vector<Ciphertext> > expanded_query; 
-
-
-
+    // vector<Plaintext> *cur = db_.get();
+    // vector<Plaintext> intermediate_plain;
+    // intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
+    final_result = vector<Ciphertext>(pir_params_.expansion_ratio);
+    intermediateCtxts = new Ciphertext[nvec[1]];
+    // vector< vector<Ciphertext> > expanded_query;
     auto pool = MemoryManager::GetPool();
 
+
+    //intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
+    Plaintext pt;
+    for(int i = 0; i < pir_params_.expansion_ratio * nvec[1];i++) {
+        intermediate_plain.emplace_back(pt);           // Allocating enough space
+    }
 
 
     int N = params_.poly_modulus_degree();
 
     int logt = floor(log2(params_.plain_modulus().value()));
 
-    cout << "expansion ratio = " << pir_params_.expansion_ratio << endl; 
-    for (uint32_t i = 0; i < nvec.size(); i++) {
+    cout << "expansion ratio = " << pir_params_.expansion_ratio << endl;
+    for (uint32_t i = 0; i < nvec.size(); i++)
+    {
         vector<Ciphertext> single_dim_exp_query;
-        cout << "Server: " << i + 1 << "-th recursion level started " << endl; 
+        cout << "Server: " << i + 1 << "-th recursion level started " << endl;
 
         uint64_t n_i = nvec[i];
-        cout << "Server: n_i = " << n_i << endl; 
+        cout << "Server: n_i = " << n_i << endl;
         cout << "Server: expanding " << query[i].size() << " query ctxts" << endl;
-        for (uint32_t j = 0; j < query[i].size(); j++){
-            uint64_t total = N; 
-            if (j == query[i].size() - 1){
-                total = ((n_i - 1) % N) + 1; 
+        for (uint32_t j = 0; j < query[i].size(); j++)
+        {
+            uint64_t total = N;
+            if (j == query[i].size() - 1)
+            {
+                total = ((n_i - 1) % N) + 1;
             }
-            cout<<"total "<<total<<endl; 
-            cout << "-- expanding one query ctxt into " << total  << " ctxts "<< endl;
+            cout << "total " << total << endl;
+            cout << "-- expanding one query ctxt into " << total << " ctxts " << endl;
             auto time_pre_s = chrono::high_resolution_clock::now();
             vector<Ciphertext> expanded_query_part = expand_query(query[i][j], total, client_id);
             auto time_post_s = chrono::high_resolution_clock::now();
             expansion_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-            single_dim_exp_query.insert(single_dim_exp_query.end(), std::make_move_iterator(expanded_query_part.begin()), 
-                    std::make_move_iterator(expanded_query_part.end()));
-            expanded_query_part.clear(); 
- 
+            single_dim_exp_query.insert(single_dim_exp_query.end(), std::make_move_iterator(expanded_query_part.begin()),
+                                        std::make_move_iterator(expanded_query_part.end()));
+            expanded_query_part.clear();
         }
         expanded_query.push_back(single_dim_exp_query);
-        cout << "Server: expansion done " << endl; 
-        if (expanded_query[i].size() != n_i) {
-            cout << " size mismatch!!! " << expanded_query.size() << ", " << n_i << endl; 
-        }  
-    }  
+        cout << "Server: expansion done " << endl;
+        if (expanded_query[i].size() != n_i)
+        {
+            cout << " size mismatch!!! " << expanded_query.size() << ", " << n_i << endl;
+        }
+    }
 
     auto time_pre_s = chrono::high_resolution_clock::now();
-    for(int i = 0; i < expanded_query.size();i++) {
-        for (uint32_t jj = 0; jj < expanded_query[i].size(); jj++) {
+    for (int i = 0; i < expanded_query.size(); i++)
+    {
+        for (uint32_t jj = 0; jj < expanded_query[i].size(); jj++)
+        {
             evaluator_->transform_to_ntt_inplace(expanded_query[i][jj]);
         }
     }
     auto time_post_s = chrono::high_resolution_clock::now();
     query_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
+    pthread_mutex_lock(&request_received_lock);
+    request_received = true;
+    pthread_cond_broadcast(&request_received_cond);
+    pthread_mutex_unlock(&request_received_lock);
+ 
+std::this_thread::sleep_for(std::chrono::seconds(10)); 
+    return final_result;
+}
 
-    //for (uint32_t i = 0; i < nvec.size(); i++) {
+void *pir(void *arg)
+{
+    int my_id = ((ThreadArgument *)arg)->thread_id;
+    PIRServer *server = ((ThreadArgument *)arg)->server;
+    
+
+    //vector<uint64_t> nvec = server->nvec;
+
+    int logt = floor(log2(server->params_.plain_modulus().value()));
+
+    while (!server->request_received) {
+        pthread_mutex_lock(&server->request_received_lock);
+        pthread_cond_wait(&server->request_received_cond, &server->request_received_lock);
+        pthread_mutex_unlock(&server->request_received_lock);
+    }
+
+vector<Plaintext> *current_db = server->db_.get();
+    int client_factor = floor((double)server->nvec[1] /server->num_thread);
+
+    int start_id = my_id * client_factor;
+    int remaining = server->nvec[1] % server->num_thread;
+    if (remaining > my_id)
+    {
+        start_id += my_id;
+        client_factor++;
+    }
+    else
+    {
+        start_id += remaining;
+    }
+    int end_id = MIN((start_id + client_factor), (server->nvec[1]));
+    //printf("thread %d start %d end %d \n",my_id,start_id, end_id);
+
+    auto tempplain = util::allocate<Plaintext>(
+        server->pir_params_.expansion_ratio * client_factor,
+        MemoryManager::GetPool(), server->params_.poly_modulus_degree());
 
 
-        // product /= nvec[0];
-        // printf("product after %d division: %d\n",0+1,product);
+    Ciphertext temp;
 
-        Ciphertext temp;
-
-        for (uint64_t k = 0; k < nvec[1]; k++) {
-            time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->multiply_plain(expanded_query[0][0], (*cur)[k], intermediateCtxts[k]);
-            time_post_s = chrono::high_resolution_clock::now();
-            mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-            for (uint64_t j = 1; j < nvec[0]; j++) {
-                time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->multiply_plain(expanded_query[0][j], (*cur)[k + j * nvec[1]], temp);
-                time_post_s = chrono::high_resolution_clock::now();
-                mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-                time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->add_inplace(intermediateCtxts[k], temp); // Adds to first component.
-                time_post_s = chrono::high_resolution_clock::now();
-                add_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-            }
-            time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->transform_from_ntt_inplace(intermediateCtxts[k]);
-            time_post_s = chrono::high_resolution_clock::now();
-
-            inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-        }
-
-     
-            time_pre_s = chrono::high_resolution_clock::now();
-            //intermediate_plain.clear();
-            //intermediate_plain.reserve(pir_params_.expansion_ratio * product);
-            cur = &intermediate_plain;
-
-            auto tempplain = util::allocate<Plaintext>(
-                pir_params_.expansion_ratio * nvec[1],
-                pool, coeff_count);
-
-            for (uint64_t rr = 0; rr < nvec[1]; rr++) {
-
-                decompose_to_plaintexts_ptr(intermediateCtxts[rr],
-                    tempplain.get() + rr * pir_params_.expansion_ratio, logt);
-
-                for (uint32_t jj = 0; jj < pir_params_.expansion_ratio; jj++) {
-                    auto offset = rr * pir_params_.expansion_ratio + jj;
-                    intermediate_plain.emplace_back(tempplain[offset]);
-                }
-            }
-            //product *= pir_params_.expansion_ratio; // multiply by expansion rate.
-            time_post_s = chrono::high_resolution_clock::now();
-            inter_db_construction_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-        
+    for (uint64_t k = start_id; k < end_id; k++)
+    {
+        server->evaluator_->multiply_plain(server->expanded_query[0][0], (*current_db)[k], server->intermediateCtxts[k]);
+        for (uint64_t j = 1; j < server->nvec[0]; j++)
         {
-            time_pre_s = chrono::high_resolution_clock::now();
-            for (uint32_t jj = 0; jj < cur->size(); jj++) {
-                evaluator_->transform_to_ntt_inplace((*cur)[jj], params_.parms_id());
-            }
-            time_post_s = chrono::high_resolution_clock::now();
-            inter_db_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
+            server->evaluator_->multiply_plain(server->expanded_query[0][j], (*current_db)[k + j * server->nvec[1]], temp);
+            server->evaluator_->add_inplace(server->intermediateCtxts[k], temp); // Adds to first component.
         }
+        server->evaluator_->transform_from_ntt_inplace(server->intermediateCtxts[k]);
+        server->decompose_to_plaintexts_ptr(server->intermediateCtxts[k],
+                                    tempplain.get() + (k-start_id) * server->pir_params_.expansion_ratio, logt);
 
-            // product /= nvec[1];
-            // printf("product after %d division: %d\n",1+1,product);
+    }
+printf("thread %d finished first step\n",my_id);
+   current_db = &server->intermediate_plain;
 
 
-        for (uint64_t k = 0; k < pir_params_.expansion_ratio; k++) {
-            time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->multiply_plain(expanded_query[1][0], (*cur)[k], final_result[k]);
-            time_post_s = chrono::high_resolution_clock::now();
-            mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-            for (uint64_t j = 1; j < nvec[1]; j++) {
-                time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->multiply_plain(expanded_query[1][j], (*cur)[k + j * pir_params_.expansion_ratio], temp);
-                time_post_s = chrono::high_resolution_clock::now();
-                mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+    for (uint64_t rr = 0; rr < server->nvec[1]; rr++)
+    {
 
-                time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->add_inplace(final_result[k], temp); // Adds to first component.
-                time_post_s = chrono::high_resolution_clock::now();
-                add_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-            }
-            time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->transform_from_ntt_inplace(final_result[k]);
-            time_post_s = chrono::high_resolution_clock::now();
-
-            inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
+        for (uint32_t jj = 0; jj < server->pir_params_.expansion_ratio; jj++)
+        {
+            auto offset = rr * server->pir_params_.expansion_ratio + jj;
+            server->intermediate_plain[offset] =(tempplain[offset]);
         }
-        return final_result;
+    }
+
+    for (uint32_t jj = 0; jj < current_db->size(); jj++)
+    {
+        server->evaluator_->transform_to_ntt_inplace((*current_db)[jj], server->params_.parms_id());
+    }
 
 
-        //cout << "Server: " << i + 1 << "-th recursion level finished " << endl; 
-        cout << endl;
-    //}
-    cout << "reply generated!  " << endl;
-    // This should never get here
-    assert(0);
-    vector<Ciphertext> fail(1);
-    return fail;
+    for (uint64_t k = 0; k < server->pir_params_.expansion_ratio; k++)
+    {
+        server->evaluator_->multiply_plain(server->expanded_query[1][0], (*current_db)[k], server->final_result[k]);
+        for (uint64_t j = 1; j < server->nvec[1]; j++)
+        {
+            server->evaluator_->multiply_plain(server->expanded_query[1][j], (*current_db)[k + j * server->pir_params_.expansion_ratio], temp);
+            server->evaluator_->add_inplace(server->final_result[k], temp); // Adds to first component.
+        }
+        server->evaluator_->transform_from_ntt_inplace(server->final_result[k]);
+
+    }
 }
 
 inline vector<Ciphertext> PIRServer::expand_query(const Ciphertext &encrypted, uint32_t m,
-                                           uint32_t client_id) {
+                                                  uint32_t client_id)
+{
 
 #ifdef DEBUG
     uint64_t plainMod = params_.plain_modulus().value();
@@ -326,16 +352,18 @@ inline vector<Ciphertext> PIRServer::expand_query(const Ciphertext &encrypted, u
 
     // Assume that m is a power of 2. If not, round it to the next power of 2.
     uint32_t logm = ceil(log2((uint32_t)m));
-cout<<"m "<<m<<endl;
-cout<<"logm "<<logm<<endl;
+    cout << "m " << m << endl;
+    cout << "logm " << logm << endl;
     Plaintext two("2");
 
     vector<int> galois_elts;
     auto n = params_.poly_modulus_degree();
-    if (logm > ceil(log2(n))){
-        throw logic_error("m > n is not allowed."); 
+    if (logm > ceil(log2(n)))
+    {
+        throw logic_error("m > n is not allowed.");
     }
-    for (int i = 0; i < ceil(log2(n)); i++) {
+    for (int i = 0; i < ceil(log2(n)); i++)
+    {
         galois_elts.push_back((n + exponentiate_uint64(2, i)) / exponentiate_uint64(2, i));
     }
     // cout<<"Printing galois elts from expand";
@@ -351,30 +379,29 @@ cout<<"logm "<<logm<<endl;
     Ciphertext tempctxt_shifted;
     Ciphertext tempctxt_rotatedshifted;
 
-
-    for (uint32_t i = 0; i < logm - 1; i++) {
+    for (uint32_t i = 0; i < logm - 1; i++)
+    {
         vector<Ciphertext> newtemp(temp.size() << 1);
         // temp[a] = (j0 = a (mod 2**i) ? ) : Enc(x^{j0 - a}) else Enc(0).  With
         // some scaling....
         int index_raw = (n << 1) - (1 << i);
         int index = (index_raw * galois_elts[i]) % (n << 1);
 
-        for (uint32_t a = 0; a < temp.size(); a++) {
-//cout<<"calling apply_galois, i = "<<i<<" galois_elts[i] "<<galois_elts[i]<<endl;
+        for (uint32_t a = 0; a < temp.size(); a++)
+        {
+            //cout<<"calling apply_galois, i = "<<i<<" galois_elts[i] "<<galois_elts[i]<<endl;
             evaluator_->apply_galois(temp[a], galois_elts[i], galkey, tempctxt_rotated);
 
-            //cout << "rotate " << client.decryptor_->invariant_noise_budget(tempctxt_rotated) << ", "; 
+            //cout << "rotate " << client.decryptor_->invariant_noise_budget(tempctxt_rotated) << ", ";
 
             evaluator_->add(temp[a], tempctxt_rotated, newtemp[a]);
             multiply_power_of_X(temp[a], tempctxt_shifted, index_raw);
 
-            //cout << "mul by x^pow: " << client.decryptor_->invariant_noise_budget(tempctxt_shifted) << ", "; 
-
+            //cout << "mul by x^pow: " << client.decryptor_->invariant_noise_budget(tempctxt_shifted) << ", ";
 
             multiply_power_of_X(tempctxt_rotated, tempctxt_rotatedshifted, index);
 
-            // cout << "mul by x^pow: " << client.decryptor_->invariant_noise_budget(tempctxt_rotatedshifted) << ", "; 
-
+            // cout << "mul by x^pow: " << client.decryptor_->invariant_noise_budget(tempctxt_rotatedshifted) << ", ";
 
             // Enc(2^i x^j) if j = 0 (mod 2**i).
             evaluator_->add(tempctxt_shifted, tempctxt_rotatedshifted, newtemp[a + temp.size()]);
@@ -392,11 +419,15 @@ cout<<"logm "<<logm<<endl;
     vector<Ciphertext> newtemp(temp.size() << 1);
     int index_raw = (n << 1) - (1 << (logm - 1));
     int index = (index_raw * galois_elts[logm - 1]) % (n << 1);
-    for (uint32_t a = 0; a < temp.size(); a++) {
-        if (a >= (m - (1 << (logm - 1)))) {                       // corner case.
+    for (uint32_t a = 0; a < temp.size(); a++)
+    {
+        if (a >= (m - (1 << (logm - 1))))
+        {                                                         // corner case.
             evaluator_->multiply_plain(temp[a], two, newtemp[a]); // plain multiplication by 2.
-            // cout << client.decryptor_->invariant_noise_budget(newtemp[a]) << ", "; 
-        } else {
+            // cout << client.decryptor_->invariant_noise_budget(newtemp[a]) << ", ";
+        }
+        else
+        {
             evaluator_->apply_galois(temp[a], galois_elts[logm - 1], galkey, tempctxt_rotated);
             evaluator_->add(temp[a], tempctxt_rotated, newtemp[a]);
             multiply_power_of_X(temp[a], tempctxt_shifted, index_raw);
@@ -412,22 +443,25 @@ cout<<"logm "<<logm<<endl;
 }
 
 inline void PIRServer::multiply_power_of_X(const Ciphertext &encrypted, Ciphertext &destination,
-                                    uint32_t index) {
+                                           uint32_t index)
+{
 
     auto coeff_mod_count = params_.coeff_modulus().size();
     auto coeff_count = params_.poly_modulus_degree();
     auto encrypted_count = encrypted.size();
 
-    //cout << "coeff mod count for power of X = " << coeff_mod_count << endl; 
-    //cout << "coeff count for power of X = " << coeff_count << endl; 
+    //cout << "coeff mod count for power of X = " << coeff_mod_count << endl;
+    //cout << "coeff count for power of X = " << coeff_count << endl;
 
     // First copy over.
     destination = encrypted;
 
     // Prepare for destination
     // Multiply X^index for each ciphertext polynomial
-    for (int i = 0; i < encrypted_count; i++) {
-        for (int j = 0; j < coeff_mod_count; j++) {
+    for (int i = 0; i < encrypted_count; i++)
+    {
+        for (int j = 0; j < coeff_mod_count; j++)
+        {
             negacyclic_shift_poly_coeffmod(encrypted.data(i) + (j * coeff_count),
                                            coeff_count, index,
                                            params_.coeff_modulus()[j],
@@ -436,35 +470,39 @@ inline void PIRServer::multiply_power_of_X(const Ciphertext &encrypted, Cipherte
     }
 }
 
-inline void PIRServer::decompose_to_plaintexts_ptr(const Ciphertext &encrypted, Plaintext *plain_ptr, int logt) {
+inline void PIRServer::decompose_to_plaintexts_ptr(const Ciphertext &encrypted, Plaintext *plain_ptr, int logt)
+{
 
     vector<Plaintext> result;
     auto coeff_count = params_.poly_modulus_degree();
     auto coeff_mod_count = params_.coeff_modulus().size();
     auto encrypted_count = encrypted.size();
 
-    uint64_t t1 = 1 << logt;  //  t1 <= t. 
+    uint64_t t1 = 1 << logt; //  t1 <= t.
 
-    uint64_t t1minusone =  t1 -1; 
+    uint64_t t1minusone = t1 - 1;
     // A triple for loop. Going over polys, moduli, and decomposed index.
 
-    for (int i = 0; i < encrypted_count; i++) {
+    for (int i = 0; i < encrypted_count; i++)
+    {
         const uint64_t *encrypted_pointer = encrypted.data(i);
-        for (int j = 0; j < coeff_mod_count; j++) {
+        for (int j = 0; j < coeff_mod_count; j++)
+        {
             // populate one poly at a time.
             // create a polynomial to store the current decomposition value
             // which will be copied into the array to populate it at the current
             // index.
             double logqj = log2(params_.coeff_modulus()[j].value());
             //int expansion_ratio = ceil(logqj + exponent - 1) / exponent;
-            int expansion_ratio =  ceil(logqj / logt); 
+            int expansion_ratio = ceil(logqj / logt);
             // cout << "local expansion ratio = " << expansion_ratio << endl;
             uint64_t curexp = 0;
-            for (int k = 0; k < expansion_ratio; k++) {
+            for (int k = 0; k < expansion_ratio; k++)
+            {
                 // Decompose here
-                for (int m = 0; m < coeff_count; m++) {
-                    plain_ptr[i * coeff_mod_count * expansion_ratio
-                        + j * expansion_ratio + k][m] =
+                for (int m = 0; m < coeff_count; m++)
+                {
+                    plain_ptr[i * coeff_mod_count * expansion_ratio + j * expansion_ratio + k][m] =
                         (*(encrypted_pointer + m + (j * coeff_count)) >> curexp) & t1minusone;
                 }
                 curexp += logt;
@@ -473,7 +511,8 @@ inline void PIRServer::decompose_to_plaintexts_ptr(const Ciphertext &encrypted, 
     }
 }
 
-vector<Plaintext> PIRServer::decompose_to_plaintexts(const Ciphertext &encrypted) {
+vector<Plaintext> PIRServer::decompose_to_plaintexts(const Ciphertext &encrypted)
+{
     vector<Plaintext> result;
     auto coeff_count = params_.poly_modulus_degree();
     auto coeff_mod_count = params_.coeff_modulus().size();
@@ -484,9 +523,11 @@ vector<Plaintext> PIRServer::decompose_to_plaintexts(const Ciphertext &encrypted
     uint64_t plainMod = params_.plain_modulus().value();
 
     // A triple for loop. Going over polys, moduli, and decomposed index.
-    for (int i = 0; i < encrypted_count; i++) {
+    for (int i = 0; i < encrypted_count; i++)
+    {
         const uint64_t *encrypted_pointer = encrypted.data(i);
-        for (int j = 0; j < coeff_mod_count; j++) {
+        for (int j = 0; j < coeff_mod_count; j++)
+        {
             // populate one poly at a time.
             // create a polynomial to store the current decomposition value
             // which will be copied into the array to populate it at the current
@@ -496,14 +537,14 @@ vector<Plaintext> PIRServer::decompose_to_plaintexts(const Ciphertext &encrypted
 
             // cout << "expansion ratio = " << expansion_ratio << endl;
             uint64_t cur = 1;
-            for (int k = 0; k < expansion_ratio; k++) {
+            for (int k = 0; k < expansion_ratio; k++)
+            {
                 // Decompose here
                 Plaintext temp(coeff_count);
-                transform(encrypted_pointer + (j * coeff_count), 
-                        encrypted_pointer + ((j + 1) * coeff_count), 
-                        temp.data(),
-                        [cur, &plainMod](auto &in) { return (in / cur) % plainMod; }
-                );
+                transform(encrypted_pointer + (j * coeff_count),
+                          encrypted_pointer + ((j + 1) * coeff_count),
+                          temp.data(),
+                          [cur, &plainMod](auto &in) { return (in / cur) % plainMod; });
 
                 result.emplace_back(move(temp));
                 cur *= plainMod;
