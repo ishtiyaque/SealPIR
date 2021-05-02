@@ -150,6 +150,10 @@ cout<<"initial value of product "<<product<<endl;
     vector<Plaintext> *cur = db_.get();
     vector<Plaintext> intermediate_plain; // pir_params_.expansion_ratio * nvec[1] // decompose....
     intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
+    vector<Ciphertext> final_result(pir_params_.expansion_ratio);
+    vector<Ciphertext> intermediateCtxts(nvec[1]);
+
+
 
     auto pool = MemoryManager::GetPool();
 
@@ -207,7 +211,6 @@ cout<<"initial value of product "<<product<<endl;
         product /= nvec[0];
     printf("product after %d division: %d\n",0+1,product);
 
-        vector<Ciphertext> intermediateCtxts(product);
         Ciphertext temp;
 
         for (uint64_t k = 0; k < product; k++) {
@@ -272,13 +275,11 @@ cout<<"initial value of product "<<product<<endl;
 
             product /= nvec[1];
     printf("product after %d division: %d\n",1+1,product);
-    {
-        vector<Ciphertext> intermediateCtxts(product);
-        Ciphertext temp;
+
 
         for (uint64_t k = 0; k < product; k++) {
             time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->multiply_plain(expanded_query[1][0], (*cur)[k], intermediateCtxts[k]);
+            evaluator_->multiply_plain(expanded_query[1][0], (*cur)[k], final_result[k]);
             time_post_s = chrono::high_resolution_clock::now();
             mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
             for (uint64_t j = 1; j < nvec[1]; j++) {
@@ -288,20 +289,20 @@ cout<<"initial value of product "<<product<<endl;
                 mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
                 time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->add_inplace(intermediateCtxts[k], temp); // Adds to first component.
+                evaluator_->add_inplace(final_result[k], temp); // Adds to first component.
                 time_post_s = chrono::high_resolution_clock::now();
                 add_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
             }
             time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->transform_from_ntt_inplace(intermediateCtxts[k]);
+            evaluator_->transform_from_ntt_inplace(final_result[k]);
             time_post_s = chrono::high_resolution_clock::now();
 
             inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
         }
-        return intermediateCtxts;
-    }
+        return final_result;
+
 
         //cout << "Server: " << i + 1 << "-th recursion level finished " << endl; 
         cout << endl;
