@@ -148,7 +148,8 @@ cout<<"initial value of product "<<product<<endl;
     auto coeff_count = params_.poly_modulus_degree();
 
     vector<Plaintext> *cur = db_.get();
-    vector<Plaintext> intermediate_plain; // decompose....
+    vector<Plaintext> intermediate_plain; // pir_params_.expansion_ratio * nvec[1] // decompose....
+    intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
 
     auto pool = MemoryManager::GetPool();
 
@@ -191,37 +192,18 @@ cout<<"initial value of product "<<product<<endl;
         }  
     }  
 
-
+    auto time_pre_s = chrono::high_resolution_clock::now();
     for(int i = 0; i < expanded_query.size();i++) {
         for (uint32_t jj = 0; jj < expanded_query[i].size(); jj++) {
             evaluator_->transform_to_ntt_inplace(expanded_query[i][jj]);
         }
     }
+    auto time_post_s = chrono::high_resolution_clock::now();
+    query_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
 
     for (uint32_t i = 0; i < nvec.size(); i++) {
 
-        // Transform expanded query to NTT, and ...
-        auto time_pre_s = chrono::high_resolution_clock::now();
-        auto time_post_s = chrono::high_resolution_clock::now();
-        query_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-
-        // Transform plaintext to NTT. If database is pre-processed, can skip
-        if ((!is_db_preprocessed_) || i > 0) {
-            time_pre_s = chrono::high_resolution_clock::now();
-            for (uint32_t jj = 0; jj < cur->size(); jj++) {
-                evaluator_->transform_to_ntt_inplace((*cur)[jj], params_.parms_id());
-            }
-            time_post_s = chrono::high_resolution_clock::now();
-            inter_db_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-
-        }
-
-        // for (uint64_t k = 0; k < product; k++) {
-        //     if ((*cur)[k].is_zero()){
-        //         cout << k + 1 << "/ " << product <<  "-th ptxt = 0 " << endl; 
-        //     }
-        // }
 
         product /= nvec[i];
     printf("product after %d division: %d\n",i+1,product);
@@ -246,23 +228,22 @@ cout<<"initial value of product "<<product<<endl;
                 add_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
             }
-        }
-        time_pre_s = chrono::high_resolution_clock::now();
-        for (uint32_t jj = 0; jj < intermediateCtxts.size(); jj++) {
-            evaluator_->transform_from_ntt_inplace(intermediateCtxts[jj]);
-            //cout << "const term of ctxt " << jj << " = " << intermediateCtxts[jj][0] << endl; 
-        }
-        time_post_s = chrono::high_resolution_clock::now();
-        inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+            time_pre_s = chrono::high_resolution_clock::now();
+            evaluator_->transform_from_ntt_inplace(intermediateCtxts[k]);
+            time_post_s = chrono::high_resolution_clock::now();
 
-cout<<"done step\n";
+            inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
+        }
+
+
 
         if (i == nvec.size() - 1) {
             return intermediateCtxts;
         } else {
             time_pre_s = chrono::high_resolution_clock::now();
-            intermediate_plain.clear();
-            intermediate_plain.reserve(pir_params_.expansion_ratio * product);
+            //intermediate_plain.clear();
+            //intermediate_plain.reserve(pir_params_.expansion_ratio * product);
             cur = &intermediate_plain;
 
             auto tempplain = util::allocate<Plaintext>(
@@ -284,6 +265,16 @@ cout<<"done step\n";
             inter_db_construction_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
         }
+        {
+            time_pre_s = chrono::high_resolution_clock::now();
+            for (uint32_t jj = 0; jj < cur->size(); jj++) {
+                evaluator_->transform_to_ntt_inplace((*cur)[jj], params_.parms_id());
+            }
+            time_post_s = chrono::high_resolution_clock::now();
+            inter_db_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
+        }
+
         //cout << "Server: " << i + 1 << "-th recursion level finished " << endl; 
         cout << endl;
     }
