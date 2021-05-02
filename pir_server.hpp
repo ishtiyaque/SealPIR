@@ -22,7 +22,7 @@ void *expand_thread(void *arg);
 
 class PIRServer {
   public:
-    PIRServer(const seal::EncryptionParameters &params, const PirParams &pir_params, int _num_threads=4  );
+    PIRServer(const seal::EncryptionParameters &params, const PirParams &pir_params, int _num_threads=1  );
 
     // NOTE: server takes over ownership of db and frees it when it exits.
     // Caller cannot free db
