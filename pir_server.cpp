@@ -23,6 +23,14 @@ PIRServer::PIRServer(const EncryptionParameters &params, const PirParams &pir_pa
 
     request_received=false;
 
+    pthread_barrier_init(&first_phase_barrier,NULL, num_thread);
+    pthread_barrier_init(&second_phase_barrier,NULL, num_thread);
+
+    vector<Ciphertext> dummy;
+    for(int i = 0; i < num_thread;i++) {
+        partial_results.push_back(dummy);
+    }
+
     threads = new pthread_t[num_thread];
     args = new ThreadArgument[num_thread];
 
@@ -166,23 +174,56 @@ void PIRServer::set_galois_key(std::uint32_t client_id, seal::GaloisKeys galkey)
     galoisKeys_[client_id] = galkey;
 }
 
+
+
+void *expand_thread(void *arg) {
+    int my_id = ((ExpandArgument*)arg)->thread_id;
+    PIRServer *server = ((ExpandArgument*)arg)->server;
+    vector<Ciphertext> query = ((ExpandArgument*)arg)->query;
+
+    vector<Ciphertext> single_dim_exp_query;
+
+    uint64_t n_i = server->nvec[my_id];
+    cout << "Server: n_i = " << n_i << endl;
+    cout << "Server: expanding " << query.size() << " query ctxts" << endl;
+    uint64_t N = server->params_.poly_modulus_degree();
+    for (uint32_t j = 0; j < query.size(); j++)
+    {
+        uint64_t total = N;
+        if (j == query.size() - 1)
+        {
+            total = ((n_i - 1) % N) + 1;
+        }
+        cout << "total " << total << endl;
+        cout << "-- expanding one query ctxt into " << total << " ctxts " << endl;
+        vector<Ciphertext> expanded_query_part = server->expand_query(query[j], total, 0); // client_id 0 hard coded
+        single_dim_exp_query.insert(single_dim_exp_query.end(), std::make_move_iterator(expanded_query_part.begin()),
+                                    std::make_move_iterator(expanded_query_part.end()));
+        expanded_query_part.clear();
+    }
+    server->expanded_query[my_id] = single_dim_exp_query;
+    cout << "Server: expansion done " << endl;
+    if (server->expanded_query[my_id].size() != n_i)
+    {
+        cout << " size mismatch!!! " << server->expanded_query.size() << ", " << n_i << endl;
+    }
+
+    return NULL;
+
+}
+
+
+
 PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id)
 {
 
     nvec = pir_params_.nvec;
-    //uint64_t product = 1;
-
-    // for (uint32_t i = 0; i < nvec.size(); i++) {
-    //     product *= nvec[i];
-    // }
-
-    //cout<<"initial value of product "<<product<<endl;
     auto coeff_count = params_.poly_modulus_degree();
 
-    // vector<Plaintext> *cur = db_.get();
-    // vector<Plaintext> intermediate_plain;
-    // intermediate_plain.reserve(pir_params_.expansion_ratio * nvec[1]);
-    final_result = vector<Ciphertext>(pir_params_.expansion_ratio);
+
+    for(int i = 0; i < num_thread;i++) {
+        partial_results[i] = vector<Ciphertext>(pir_params_.expansion_ratio);
+    }
     intermediateCtxts = new Ciphertext[nvec[1]];
     // vector< vector<Ciphertext> > expanded_query;
     auto pool = MemoryManager::GetPool();
@@ -194,44 +235,66 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id)
         intermediate_plain.emplace_back(pt);           // Allocating enough space
     }
 
-
+    expanded_query = vector< vector<Ciphertext> >(nvec.size());
     int N = params_.poly_modulus_degree();
 
     int logt = floor(log2(params_.plain_modulus().value()));
 
-    cout << "expansion ratio = " << pir_params_.expansion_ratio << endl;
-    for (uint32_t i = 0; i < nvec.size(); i++)
-    {
-        vector<Ciphertext> single_dim_exp_query;
-        cout << "Server: " << i + 1 << "-th recursion level started " << endl;
+    auto time_pre_e = chrono::high_resolution_clock::now();
 
-        uint64_t n_i = nvec[i];
-        cout << "Server: n_i = " << n_i << endl;
-        cout << "Server: expanding " << query[i].size() << " query ctxts" << endl;
-        for (uint32_t j = 0; j < query[i].size(); j++)
-        {
-            uint64_t total = N;
-            if (j == query[i].size() - 1)
-            {
-                total = ((n_i - 1) % N) + 1;
-            }
-            cout << "total " << total << endl;
-            cout << "-- expanding one query ctxt into " << total << " ctxts " << endl;
-            auto time_pre_s = chrono::high_resolution_clock::now();
-            vector<Ciphertext> expanded_query_part = expand_query(query[i][j], total, client_id);
-            auto time_post_s = chrono::high_resolution_clock::now();
-            expansion_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-            single_dim_exp_query.insert(single_dim_exp_query.end(), std::make_move_iterator(expanded_query_part.begin()),
-                                        std::make_move_iterator(expanded_query_part.end()));
-            expanded_query_part.clear();
+    ExpandArgument exp_arg[nvec.size()];
+    pthread_t expand_threads[nvec.size()];
+ 
+    for(int i = 0; i < nvec.size();i++) {
+        exp_arg[i].thread_id = i;
+        exp_arg[i].server = this;
+        exp_arg[i].query = query[i];
+        if(pthread_create(&expand_threads[i], NULL, expand_thread, (void *)&exp_arg[i])) {
+            printf("Error creating thread\n");
+            exit(1);
         }
-        expanded_query.push_back(single_dim_exp_query);
-        cout << "Server: expansion done " << endl;
-        if (expanded_query[i].size() != n_i)
-        {
-            cout << " size mismatch!!! " << expanded_query.size() << ", " << n_i << endl;
-        }
+
     }
+    for(int i = 0;i<nvec.size();i++) {
+        pthread_join(expand_threads[i], NULL);
+    }
+    auto time_post_e = chrono::high_resolution_clock::now();
+    expansion_time += chrono::duration_cast<chrono::microseconds>(time_post_e - time_pre_e).count();
+
+
+    // cout << "expansion ratio = " << pir_params_.expansion_ratio << endl;
+    // for (uint32_t i = 0; i < nvec.size(); i++)
+    // {
+    //     vector<Ciphertext> single_dim_exp_query;
+    //     cout << "Server: " << i + 1 << "-th recursion level started " << endl;
+
+    //     uint64_t n_i = nvec[i];
+    //     cout << "Server: n_i = " << n_i << endl;
+    //     cout << "Server: expanding " << query[i].size() << " query ctxts" << endl;
+    //     for (uint32_t j = 0; j < query[i].size(); j++)
+    //     {
+    //         uint64_t total = N;
+    //         if (j == query[i].size() - 1)
+    //         {
+    //             total = ((n_i - 1) % N) + 1;
+    //         }
+    //         cout << "total " << total << endl;
+    //         cout << "-- expanding one query ctxt into " << total << " ctxts " << endl;
+    //         auto time_pre_s = chrono::high_resolution_clock::now();
+    //         vector<Ciphertext> expanded_query_part = expand_query(query[i][j], total, client_id);
+    //         auto time_post_s = chrono::high_resolution_clock::now();
+    //         expansion_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+    //         single_dim_exp_query.insert(single_dim_exp_query.end(), std::make_move_iterator(expanded_query_part.begin()),
+    //                                     std::make_move_iterator(expanded_query_part.end()));
+    //         expanded_query_part.clear();
+    //     }
+    //     expanded_query.push_back(single_dim_exp_query);
+    //     cout << "Server: expansion done " << endl;
+    //     if (expanded_query[i].size() != n_i)
+    //     {
+    //         cout << " size mismatch!!! " << expanded_query.size() << ", " << n_i << endl;
+    //     }
+    // }
 
     auto time_pre_s = chrono::high_resolution_clock::now();
     for (int i = 0; i < expanded_query.size(); i++)
@@ -248,9 +311,13 @@ PirReply PIRServer::generate_reply(PirQuery query, uint32_t client_id)
     request_received = true;
     pthread_cond_broadcast(&request_received_cond);
     pthread_mutex_unlock(&request_received_lock);
+
+    for(int i = 0;i<num_thread;i++) {
+        pthread_join(threads[i], NULL);
+    }
  
-std::this_thread::sleep_for(std::chrono::seconds(10)); 
-    return final_result;
+//std::this_thread::sleep_for(std::chrono::seconds(10)); 
+    return partial_results[0];
 }
 
 void *pir(void *arg)
@@ -313,26 +380,78 @@ vector<Plaintext> *current_db = server->db_.get();
 
     }
 printf("thread %d finished first step\n",my_id);
+
+        pthread_barrier_wait(&server->first_phase_barrier);
+
+
    current_db = &server->intermediate_plain;
 
+    // int client_factor = floor((double)server->nvec[1] /server->num_thread);
 
-    for (uint32_t jj = 0; jj < current_db->size(); jj++)
-    {
-        //server->evaluator_->transform_to_ntt_inplace((*current_db)[jj], server->params_.parms_id());
-    }
+    // int start_id = my_id * client_factor;
+    // int remaining = server->nvec[1] % server->num_thread;
+    // if (remaining > my_id)
+    // {
+    //     start_id += my_id;
+    //     client_factor++;
+    // }
+    // else
+    // {
+    //     start_id += remaining;
+    // }
+    // int end_id = MIN((start_id + client_factor), (server->nvec[1]));
+
+
+
+    // for (uint32_t jj = 0; jj < current_db->size(); jj++)
+    // {
+    //     //server->evaluator_->transform_to_ntt_inplace((*current_db)[jj], server->params_.parms_id());
+    // }
 
 
     for (uint64_t k = 0; k < server->pir_params_.expansion_ratio; k++)
     {
-        server->evaluator_->multiply_plain(server->expanded_query[1][0], (*current_db)[k], server->final_result[k]);
-        for (uint64_t j = 1; j < server->nvec[1]; j++)
+        server->evaluator_->multiply_plain(server->expanded_query[1][start_id], (*current_db)[k], server->partial_results[my_id][k]);
+        for (uint64_t j = start_id+1; j < end_id; j++)
         {
             server->evaluator_->multiply_plain(server->expanded_query[1][j], (*current_db)[k + j * server->pir_params_.expansion_ratio], temp);
-            server->evaluator_->add_inplace(server->final_result[k], temp); // Adds to first component.
+            server->evaluator_->add_inplace(server->partial_results[my_id][k], temp); // Adds to first component.
         }
-        server->evaluator_->transform_from_ntt_inplace(server->final_result[k]);
+        //server->evaluator_->transform_from_ntt_inplace(server->final_result[k]);
 
     }
+
+    pthread_barrier_wait(&server->second_phase_barrier);
+    if(my_id >= server->pir_params_.expansion_ratio) {
+        return NULL;
+    }
+    if(server->num_thread >= server->pir_params_.expansion_ratio) {
+        start_id = my_id;
+        end_id = start_id+1;
+    } else {
+        client_factor = floor((double)server->pir_params_.expansion_ratio /server->num_thread);
+        start_id = my_id * client_factor;
+        remaining = server->pir_params_.expansion_ratio % server->num_thread;
+        if (remaining > my_id)
+        {
+            start_id += my_id;
+            client_factor++;
+        }
+        else
+        {
+            start_id += remaining;
+        }
+        end_id = start_id+client_factor;
+
+    }
+
+    for(int i = start_id; i < end_id;i++) {
+        for(int j = 1;j<server->num_thread;j++) {
+            server->evaluator_->add_inplace(server->partial_results[0][i],server->partial_results[j][i]);
+        }
+        server->evaluator_->transform_from_ntt_inplace(server->partial_results[0][i]);
+    }
+    return NULL;
 }
 
 inline vector<Ciphertext> PIRServer::expand_query(const Ciphertext &encrypted, uint32_t m,

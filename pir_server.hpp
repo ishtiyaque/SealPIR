@@ -17,11 +17,12 @@ using namespace seal::util;
 
 class ThreadArgument;
 void *pir(void *arg);
+void *expand_thread(void *arg);
 
 
 class PIRServer {
   public:
-    PIRServer(const seal::EncryptionParameters &params, const PirParams &pir_params, int _num_threads=1  );
+    PIRServer(const seal::EncryptionParameters &params, const PirParams &pir_params, int _num_threads=4  );
 
     // NOTE: server takes over ownership of db and frees it when it exits.
     // Caller cannot free db
@@ -53,12 +54,17 @@ class PIRServer {
     //vector<Plaintext> *cur = db_.get();
     vector<Plaintext> intermediate_plain; 
     //Plaintext *intermediate_plain;
-    vector<Ciphertext> final_result;
+    //vector<Ciphertext> final_result;
+    vector<vector<Ciphertext>> partial_results;
     Ciphertext  *intermediateCtxts;
     vector< vector<Ciphertext> > expanded_query; 
 
     pthread_mutex_t request_received_lock = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t request_received_cond = PTHREAD_COND_INITIALIZER;
+
+    pthread_barrier_t first_phase_barrier;
+    pthread_barrier_t second_phase_barrier;
+
 
 
     bool request_received;
@@ -83,4 +89,12 @@ class ThreadArgument{
 public:
     PIRServer *server;
     int thread_id;
+};
+
+class ExpandArgument {
+public:
+    PIRServer *server;
+    int thread_id;
+    vector<Ciphertext> query;
+    
 };
