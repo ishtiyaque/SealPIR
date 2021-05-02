@@ -201,23 +201,23 @@ cout<<"initial value of product "<<product<<endl;
     query_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
 
-    for (uint32_t i = 0; i < nvec.size(); i++) {
+    //for (uint32_t i = 0; i < nvec.size(); i++) {
 
 
-        product /= nvec[i];
-    printf("product after %d division: %d\n",i+1,product);
+        product /= nvec[0];
+    printf("product after %d division: %d\n",0+1,product);
 
         vector<Ciphertext> intermediateCtxts(product);
         Ciphertext temp;
 
         for (uint64_t k = 0; k < product; k++) {
             time_pre_s = chrono::high_resolution_clock::now();
-            evaluator_->multiply_plain(expanded_query[i][0], (*cur)[k], intermediateCtxts[k]);
+            evaluator_->multiply_plain(expanded_query[0][0], (*cur)[k], intermediateCtxts[k]);
             time_post_s = chrono::high_resolution_clock::now();
             mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
-            for (uint64_t j = 1; j < nvec[i]; j++) {
+            for (uint64_t j = 1; j < nvec[0]; j++) {
                 time_pre_s = chrono::high_resolution_clock::now();
-                evaluator_->multiply_plain(expanded_query[i][j], (*cur)[k + j * product], temp);
+                evaluator_->multiply_plain(expanded_query[0][j], (*cur)[k + j * product], temp);
                 time_post_s = chrono::high_resolution_clock::now();
                 mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
@@ -235,11 +235,7 @@ cout<<"initial value of product "<<product<<endl;
 
         }
 
-
-
-        if (i == nvec.size() - 1) {
-            return intermediateCtxts;
-        } else {
+     
             time_pre_s = chrono::high_resolution_clock::now();
             //intermediate_plain.clear();
             //intermediate_plain.reserve(pir_params_.expansion_ratio * product);
@@ -263,7 +259,7 @@ cout<<"initial value of product "<<product<<endl;
             time_post_s = chrono::high_resolution_clock::now();
             inter_db_construction_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
 
-        }
+        
         {
             time_pre_s = chrono::high_resolution_clock::now();
             for (uint32_t jj = 0; jj < cur->size(); jj++) {
@@ -274,9 +270,42 @@ cout<<"initial value of product "<<product<<endl;
 
         }
 
+            product /= nvec[1];
+    printf("product after %d division: %d\n",1+1,product);
+    {
+        vector<Ciphertext> intermediateCtxts(product);
+        Ciphertext temp;
+
+        for (uint64_t k = 0; k < product; k++) {
+            time_pre_s = chrono::high_resolution_clock::now();
+            evaluator_->multiply_plain(expanded_query[1][0], (*cur)[k], intermediateCtxts[k]);
+            time_post_s = chrono::high_resolution_clock::now();
+            mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+            for (uint64_t j = 1; j < nvec[1]; j++) {
+                time_pre_s = chrono::high_resolution_clock::now();
+                evaluator_->multiply_plain(expanded_query[1][j], (*cur)[k + j * product], temp);
+                time_post_s = chrono::high_resolution_clock::now();
+                mult_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
+                time_pre_s = chrono::high_resolution_clock::now();
+                evaluator_->add_inplace(intermediateCtxts[k], temp); // Adds to first component.
+                time_post_s = chrono::high_resolution_clock::now();
+                add_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
+            }
+            time_pre_s = chrono::high_resolution_clock::now();
+            evaluator_->transform_from_ntt_inplace(intermediateCtxts[k]);
+            time_post_s = chrono::high_resolution_clock::now();
+
+            inv_ntt_time += chrono::duration_cast<chrono::microseconds>(time_post_s - time_pre_s).count();
+
+        }
+        return intermediateCtxts;
+    }
+
         //cout << "Server: " << i + 1 << "-th recursion level finished " << endl; 
         cout << endl;
-    }
+    //}
     cout << "reply generated!  " << endl;
     // This should never get here
     assert(0);
