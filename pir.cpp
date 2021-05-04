@@ -53,7 +53,10 @@ void gen_params(uint64_t ele_num, uint64_t ele_size, uint32_t N, uint32_t logt,
     for (uint32_t i = 0; i < 1; i++) {
         coeff_mod_array.emplace_back(SmallModulus());
         coeff_mod_array[i] = DefaultParams::small_mods_60bit(i);
+        coeff_mod_array.emplace_back(SmallModulus());
+        coeff_mod_array[i+1] = DefaultParams::small_mods_50bit(i);
         logq += coeff_mod_array[i].bit_count();
+        logq += coeff_mod_array[i+1].bit_count();
     }
 
     params.set_poly_modulus_degree(N);
@@ -65,7 +68,7 @@ void gen_params(uint64_t ele_num, uint64_t ele_size, uint32_t N, uint32_t logt,
     uint32_t expansion_ratio = 0;
     for (uint32_t i = 0; i < params.coeff_modulus().size(); ++i) {
         double logqi = log2(params.coeff_modulus()[i].value());
-        //cout << "PIR: logqi = " << logqi << endl; 
+        cout << "PIR: logqi = " << logqi << endl; 
         expansion_ratio += ceil(logqi / logt);
     }
 

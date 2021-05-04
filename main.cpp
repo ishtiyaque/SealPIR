@@ -14,12 +14,12 @@ using namespace seal;
 
 int main(int argc, char *argv[]) {
 
-    uint64_t number_of_items = (25 * 4096);
-    uint64_t size_per_item = 1024; // in bytes
-    uint32_t N = 2048;
+    uint64_t number_of_items = (96151);
+    uint64_t size_per_item = 30 *  512  ; // in bytes
+    uint32_t N = 4096;
 
     // Recommended values: (logt, d) = (12, 2) or (8, 1). 
-    uint32_t logt = 12; 
+    uint32_t logt = 30; 
     uint32_t d = 2;
 
     EncryptionParameters params(scheme_type::BFV);
@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize PIR Server
     cout << "Main: Initializing server and client" << endl;
-    PIRServer server(params, pir_params);
+    PIRServer server(params, pir_params,12);
 
     // Initialize PIR client....
     PIRClient client(params, pir_params);
@@ -82,6 +82,7 @@ int main(int argc, char *argv[]) {
     auto time_query_us = duration_cast<microseconds>(time_query_e - time_query_s).count();
     cout << "Main: query generated" << endl;
 
+ 
     //To marshall query to send over the network, you can use serialize/deserialize:
     //std::string query_ser = serialize_query(query);
     //PirQuery query2 = deserialize_query(d, 1, query_ser, CIPHER_SIZE);
@@ -91,6 +92,7 @@ int main(int argc, char *argv[]) {
     PirReply reply = server.generate_reply(query, 0);
     auto time_server_e = high_resolution_clock::now();
     auto time_server_us = duration_cast<microseconds>(time_server_e - time_server_s).count();
+
 
     // Measure response extraction
     auto time_decode_s = chrono::high_resolution_clock::now();
